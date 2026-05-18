@@ -158,13 +158,16 @@ app.delete('/api/employees/:id', authMiddleware, async (req, res) => {
     }
 });
 
-// ====================== AI RECOMMENDATION ROUTE ======================
+// ====================== AI RECOMMENDATION ROUTE (Improved + Safe) ======================
 app.post('/api/ai/recommend', authMiddleware, async (req, res) => {
     try {
         const { employees } = req.body;
 
+        // Basic Validation
         if (!employees || employees.length === 0) {
-            return res.status(400).json({ message: "Employees data is required" });
+            return res.status(400).json({ 
+                message: "No employees found. Please add some employees first." 
+            });
         }
 
         const prompt = `Act as a senior HR manager and AI talent analyst.
@@ -178,21 +181,29 @@ Provide the response in this structured format:
 3. **Overall Ranking** (Best to Average)
 4. **Key Insights & Feedback**`;
 
+        console.log("🤖 Calling OpenRouter AI...");
+
         const aiResponse = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
-                model: "google/gemini-2.0-flash-exp:free",   // Free model
+                model: "openrouter/free",           // Best free model
                 messages: [{ role: "user", content: prompt }],
-                temperature: 0.7
+                temperature: 0.7,
+                max_tokens: 2000
             },
             {
                 headers: {
                     'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                    'HTTP-Referer': 'http://localhost:3000',
+                    'HTTP-Referer': 'https://ai-based-employee-performance-analytics.onrender.com',
                     'X-Title': 'AI Employee System'
                 }
             }
         );
+
+        // Check if we got valid response
+        if (!aiResponse.data?.choices?.[0]?.message?.content) {
+            throw new Error("Invalid response from AI service");
+        }
 
         res.json({
             success: true,
@@ -200,10 +211,25 @@ Provide the response in this structured format:
         });
 
     } catch (error) {
-        console.error("AI API Error:", error.response?.data || error.message);
+        console.error("🔴 AI API Full Error:", error.response?.data || error.message);
+
+        let errorMessage = "AI service is currently unavailable";
+
+        // Better Error Messages
+        if (error.response?.status === 401) {
+            errorMessage = "Invalid OpenRouter API Key";
+        } else if (error.response?.status === 429) {
+            errorMessage = "Rate limit exceeded. Try again after some time.";
+        } else if (error.response?.data?.error?.message) {
+            errorMessage = error.response.data.error.message;
+        } else if (error.message.includes("API key")) {
+            errorMessage = "OpenRouter API Key is missing or invalid";
+        }
+
         res.status(500).json({
-            message: "AI service error",
-            error: error.response?.data?.error || error.message
+            success: false,
+            message: errorMessage,
+            suggestion: "Check your OpenRouter API key in Render Environment Variables"
         });
     }
 });
